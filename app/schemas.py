@@ -31,7 +31,14 @@ class Character(BaseModel):
 
 
 class AgentMessage(BaseModel):
-    stage: Literal["persona_generation", "specialist", "critic", "synthesizer"]
+    stage: Literal[
+        "persona_generation",
+        "moderator",
+        "specialist",
+        "debate",
+        "critic",
+        "synthesizer",
+    ]
     agent_id: str
     agent_name: str
     role: str
@@ -42,6 +49,7 @@ class AgentMessage(BaseModel):
 class SolveRequest(BaseModel):
     problem: str = Field(..., min_length=5)
     persona_count: int = Field(default=4, ge=3, le=5)
+    debate_rounds: int = Field(default=1, ge=1, le=3)
     use_llm: bool = True
     model: Optional[str] = None
     temperature: float = Field(default=0.35, ge=0.0, le=1.2)

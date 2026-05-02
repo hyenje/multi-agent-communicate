@@ -35,6 +35,7 @@ def solve(request: SolveRequest) -> SolveResponse:
     response = solve_problem(
         problem=request.problem,
         persona_count=request.persona_count,
+        debate_rounds=request.debate_rounds,
         use_llm=request.use_llm,
         model=request.model,
         temperature=request.temperature,

@@ -6,12 +6,14 @@
 
 1. 사용자가 문제를 입력합니다.
 2. Persona Generator가 필요한 페르소나 3~5개를 생성합니다.
-3. 미리 정의된 캐릭터 초안 중 하나를 각 페르소나에 임의로 배정합니다.
-4. Specialist Agent들이 자기 관점으로 의견을 제시합니다.
-5. Critic Agent가 모순, 약점, 누락을 지적합니다.
-6. Synthesizer Agent가 최종 답변을 통합합니다.
-7. Evaluator Agent가 최종 결과를 점수와 총평으로 평가합니다.
-8. Streamlit UI에서 캐릭터, 단계별 로그, 최종 결론, 평가 요약을 표시하고 실행 결과를 저장합니다.
+3. 미리 정의된 데포르메 피규어형 페르소나 이미지와 성격 중 하나를 각 페르소나에 임의로 배정합니다.
+4. Moderator Agent가 의제, 발언 순서, 상호 응답 규칙을 안내합니다.
+5. Specialist Agent들이 자기 관점으로 첫 의견을 제시합니다.
+6. Moderator Agent가 응답 라운드의 논점을 좁히고, Specialist Agent들이 앞선 발언에 직접 동의, 반박, 보완합니다.
+7. Critic Agent가 전체 토론의 모순, 약점, 누락을 지적합니다.
+8. Synthesizer Agent가 최종 답변을 통합합니다.
+9. Evaluator Agent가 최종 결과를 점수와 총평으로 평가합니다.
+10. Streamlit UI에서 배너, 데포르메 페르소나 캐릭터, 에이전트 토론 네트워크, 대화창형 토론 로그, 최종 결론, 평가 요약을 표시하고 실행 결과를 저장합니다.
 
 ## Setup
 
@@ -53,6 +55,7 @@ curl -X POST http://localhost:8000/solve \
   -d '{
     "problem": "2주 안에 보여줄 수 있는 AI 프로젝트 MVP를 정해야 한다.",
     "persona_count": 4,
+    "debate_rounds": 1,
     "use_llm": true
   }'
 ```
@@ -90,6 +93,7 @@ persona-graph/
     main.py
     agents/
       persona_generator.py
+      moderator.py
       specialist.py
       critic.py
       synthesizer.py
@@ -102,6 +106,16 @@ persona-graph/
     workflow.py
   ui/
     streamlit_app.py
+  assets/
+    hero/
+      personagraph-agent-network.png
+    personas/
+      persona-deformed-sheet.png
+      nori.png
+      orbit.png
+      ...
+    characters/
+      sallycore-companion.png
   data/
     runs/
   docs/

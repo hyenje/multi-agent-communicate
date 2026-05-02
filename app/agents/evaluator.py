@@ -11,18 +11,18 @@ class EvaluatorAgent:
     def evaluate(
         self,
         problem: str,
-        specialist_messages: list[AgentMessage],
+        debate_messages: list[AgentMessage],
         critique: AgentMessage,
         synthesis: AgentMessage,
     ) -> Evaluation:
         transcript = "\n\n".join(
-            f"[{message.agent_name} / {message.role}]\n{message.content}" for message in specialist_messages
+            f"[{message.agent_name} / {message.role}]\n{message.content}" for message in debate_messages
         )
         prompt = f"""
 문제:
 {problem}
 
-전문가 의견:
+토론 발언:
 {transcript}
 
 비판:
@@ -58,7 +58,7 @@ class EvaluatorAgent:
             error = "Unable to parse LLM evaluation JSON."
 
         if evaluation is None:
-            evaluation = self._fallback(specialist_messages, critique, synthesis)
+            evaluation = self._fallback(debate_messages, critique, synthesis)
             evaluation.metadata["error"] = error
 
         evaluation.metadata["source"] = source
@@ -88,7 +88,7 @@ class EvaluatorAgent:
 
     def _fallback(
         self,
-        specialist_messages: list[AgentMessage],
+        debate_messages: list[AgentMessage],
         critique: AgentMessage,
         synthesis: AgentMessage,
     ) -> Evaluation:
@@ -97,7 +97,10 @@ class EvaluatorAgent:
         has_risk = any(keyword in final_answer for keyword in ["리스크", "위험", "주의", "대응"])
         has_next_action = any(keyword in final_answer for keyword in ["다음", "24시간", "실행 단계", "액션"])
 
-        consistency = 4 if len(specialist_messages) >= 3 and critique.content else 3
+        responder_count = len({message.agent_id for message in debate_messages})
+        response_turns = len([message for message in debate_messages if message.stage == "debate"])
+
+        consistency = 5 if responder_count >= 3 and response_turns >= 3 else 4 if critique.content else 3
         specificity = 5 if bullet_count >= 6 else 4 if bullet_count >= 3 else 3
         risk_awareness = 5 if has_risk else 3
         feasibility = 5 if has_next_action else 4
@@ -107,7 +110,7 @@ class EvaluatorAgent:
             specificity=specificity,
             risk_awareness=risk_awareness,
             feasibility=feasibility,
-            overall_comment="비판과 종합 흐름이 유지되어 MVP 데모용 문제 해결 로그로 사용하기 좋습니다.",
+            overall_comment="사회자 진행, 상호 응답, 비판과 종합 흐름이 유지되어 데모용 토론 로그로 사용하기 좋습니다.",
             improvement_suggestions=[
                 "최종 답변에 정량적 성공 기준을 1개 이상 추가하면 설득력이 더 좋아집니다.",
                 "발표용 시나리오에서는 Before/After 비교 예시를 함께 준비하는 것이 좋습니다.",

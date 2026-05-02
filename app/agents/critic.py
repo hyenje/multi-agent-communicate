@@ -6,18 +6,18 @@ class CriticAgent:
     def __init__(self, llm: LLMClient):
         self.llm = llm
 
-    def review(self, problem: str, specialist_messages: list[AgentMessage]) -> AgentMessage:
+    def review(self, problem: str, debate_messages: list[AgentMessage]) -> AgentMessage:
         transcript = "\n\n".join(
-            f"[{message.agent_name} / {message.role}]\n{message.content}" for message in specialist_messages
+            f"[{message.agent_name} / {message.role}]\n{message.content}" for message in debate_messages
         )
         prompt = f"""
 문제:
 {problem}
 
-전문가 의견:
+토론 발언:
 {transcript}
 
-토론을 검토하고 모순, 약한 가정, 누락된 제약, 다음 질문을 찾으세요.
+토론 전체를 검토하고 모순, 약한 가정, 누락된 제약, 다음 질문을 찾으세요.
 반드시 자연스러운 한국어로 작성하고, 고유명사나 기술 약어 외에는 영어를 최소화하세요.
 다음 구조로 간결한 비판을 반환하세요.
 1. 모순 또는 충돌
@@ -30,7 +30,7 @@ class CriticAgent:
             user_prompt=prompt,
             temperature=0.2,
         )
-        content = result.content if result.used_llm and result.content else self._fallback(specialist_messages)
+        content = result.content if result.used_llm and result.content else self._fallback(debate_messages)
         return AgentMessage(
             stage="critic",
             agent_id="critic",
@@ -40,8 +40,8 @@ class CriticAgent:
             metadata={"source": "llm" if result.used_llm and result.content else "fallback", "error": result.error},
         )
 
-    def _fallback(self, specialist_messages: list[AgentMessage]) -> str:
-        names = ", ".join(message.agent_name for message in specialist_messages)
+    def _fallback(self, debate_messages: list[AgentMessage]) -> str:
+        names = ", ".join(dict.fromkeys(message.agent_name for message in debate_messages))
         return f"""1. 모순 또는 충돌
 {names}의 의견은 대체로 MVP 축소에는 동의하지만, 품질을 높이려는 요구와 2주 일정 사이에 긴장이 있습니다.
 

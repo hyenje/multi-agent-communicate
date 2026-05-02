@@ -9,17 +9,17 @@ class SynthesizerAgent:
     def synthesize(
         self,
         problem: str,
-        specialist_messages: list[AgentMessage],
+        debate_messages: list[AgentMessage],
         critique: AgentMessage,
     ) -> AgentMessage:
         transcript = "\n\n".join(
-            f"[{message.agent_name} / {message.role}]\n{message.content}" for message in specialist_messages
+            f"[{message.agent_name} / {message.role}]\n{message.content}" for message in debate_messages
         )
         prompt = f"""
 문제:
 {problem}
 
-전문가 의견:
+토론 발언:
 {transcript}
 
 비판:
