@@ -1,7 +1,13 @@
 from __future__ import annotations
 
-from app.llm import LLMClient, parse_json_object
+from pydantic import BaseModel, Field
+
+from app.llm import LLMClient, complete_structured
 from app.schemas import AgentMessage, Persona
+
+
+class PersonaListOutput(BaseModel):
+    personas: list[Persona] = Field(default_factory=list)
 
 
 DEFAULT_PERSONAS = [
@@ -55,7 +61,8 @@ class PersonaGenerator:
 문제:
 {problem}
 {context_block}
-반드시 JSON 배열만 반환하세요. 각 항목은 다음 필드를 포함해야 합니다.
+반드시 personas 필드를 가진 JSON 객체만 반환하세요.
+personas의 각 항목은 다음 필드를 포함해야 합니다.
 - id: snake_case 형식의 고유 ID
 - name: 짧은 한국어 에이전트 이름
 - role: 한 문장의 한국어 역할 설명
@@ -66,13 +73,15 @@ class PersonaGenerator:
 - 한국어 사용자를 위한 자연스러운 한국어로 작성하세요.
 - OpenAI, API, MVP처럼 필요한 고유명사나 기술 약어 외에는 영어를 쓰지 마세요.
 """
-        result = self.llm.complete(
+        result = complete_structured(
+            self.llm,
             system_prompt="당신은 한국어 다중 에이전트 팀을 설계합니다. 엄격한 JSON만 반환하세요.",
             user_prompt=prompt,
+            schema=PersonaListOutput,
             temperature=0.25,
         )
 
-        personas = self._from_llm(result.content, count) if result.used_llm else []
+        personas = self._from_output(result.value, count) if result.used_llm else []
         if not personas:
             personas = DEFAULT_PERSONAS[:count]
 
@@ -91,25 +100,22 @@ class PersonaGenerator:
         )
         return personas, message
 
-    def _from_llm(self, raw: str, count: int) -> list[Persona]:
-        parsed = parse_json_object(raw)
-        if not isinstance(parsed, list):
+    def _from_output(self, output: object, count: int) -> list[Persona]:
+        if not isinstance(output, PersonaListOutput):
             return []
 
         personas: list[Persona] = []
-        for index, item in enumerate(parsed[:count], start=1):
-            if not isinstance(item, dict):
-                continue
+        for index, item in enumerate(output.personas[:count], start=1):
             try:
                 personas.append(
                     Persona(
-                        id=str(item.get("id") or f"persona_{index}").strip().replace(" ", "_").lower(),
-                        name=str(item["name"]).strip(),
-                        role=str(item["role"]).strip(),
-                        perspective=str(item["perspective"]).strip(),
-                        priority_questions=[str(q).strip() for q in item.get("priority_questions", [])][:4],
+                        id=(item.id or f"persona_{index}").strip().replace(" ", "_").lower(),
+                        name=item.name.strip(),
+                        role=item.role.strip(),
+                        perspective=item.perspective.strip(),
+                        priority_questions=[q.strip() for q in item.priority_questions if q.strip()][:4],
                     )
                 )
-            except (KeyError, TypeError, ValueError):
+            except (TypeError, ValueError):
                 continue
         return personas

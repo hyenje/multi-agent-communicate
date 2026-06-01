@@ -1,4 +1,6 @@
 import unittest
+from datetime import datetime, timedelta
+from unittest.mock import patch
 
 from app.schemas import (
     AgentMessage,
@@ -10,9 +12,14 @@ from app.schemas import (
 )
 from ui.streamlit_chat import (
     chat_thread_items,
+    format_activity_duration,
     moderator_message_html,
     moderator_summary,
+    render_chat_bubble,
+    render_chat_thread,
+    response_work_duration_label,
     search_record_activity_item,
+    work_history_items,
 )
 from ui.streamlit_streaming import insert_streaming_activity_items
 
@@ -147,6 +154,172 @@ class StreamlitChatRenderingTest(unittest.TestCase):
         self.assertLess(debate_search_index, round_moderator_index)
         self.assertGreater(followup_search_index, user_index)
         self.assertLess(followup_search_index, followup_reply_index)
+
+    def test_personas_are_not_rendered_as_summary_cards(self):
+        response = SolveResponse(
+            problem="페르소나 표시 방식을 확인한다.",
+            personas=[
+                Persona(
+                    id="demo",
+                    name="데모",
+                    role="데모 흐름을 보는 역할",
+                    perspective="흐름을 중시합니다.",
+                ),
+                Persona(
+                    id="risk",
+                    name="리스크",
+                    role="위험을 보는 역할",
+                    perspective="빈틈을 중시합니다.",
+                ),
+            ],
+            messages=[],
+            final_answer="final",
+            evaluation=Evaluation(
+                consistency=5,
+                specificity=5,
+                risk_awareness=5,
+                feasibility=5,
+                overall_comment="ok",
+            ),
+            used_llm=False,
+            model="test",
+        )
+
+        items = chat_thread_items(response)
+        summary_items = [item for item in items if item.get("kind") == "persona_summary"]
+
+        self.assertEqual([], summary_items)
+        self.assertNotIn("페르소나 소개", [item.get("meta") for item in items])
+
+    def test_render_chat_thread_shows_initial_question_before_answer(self):
+        response = SolveResponse(
+            problem="물음도 화면에 보여야 한다.",
+            personas=[],
+            messages=[],
+            final_answer="답변은 본문으로 보여준다.",
+            evaluation=Evaluation(
+                consistency=5,
+                specificity=5,
+                risk_awareness=5,
+                feasibility=5,
+                overall_comment="ok",
+            ),
+            used_llm=False,
+            model="test",
+        )
+        calls = []
+
+        with (
+            patch("ui.streamlit_chat.render_chat_bubble") as render_bubble,
+            patch("ui.streamlit_chat.render_final_answer") as render_answer,
+            patch("ui.streamlit_chat.render_work_history") as render_history,
+        ):
+            render_bubble.side_effect = lambda *_args, **_kwargs: calls.append("question")
+            render_history.side_effect = lambda *_args, **_kwargs: calls.append("history")
+            render_answer.side_effect = lambda *_args, **_kwargs: calls.append("answer")
+            render_chat_thread(response, include_anchor=False)
+
+        render_bubble.assert_called_once()
+        self.assertEqual("user", render_bubble.call_args.args[0]["kind"])
+        self.assertEqual("물음도 화면에 보여야 한다.", render_bubble.call_args.args[0]["content"])
+        render_answer.assert_called_once_with(response)
+        render_history.assert_called_once_with(response, confirmed_settings=None)
+        self.assertEqual(["question", "history", "answer"], calls)
+
+    def test_user_bubble_hides_chat_metadata_by_default(self):
+        with patch("ui.streamlit_chat.st.markdown") as markdown:
+            render_chat_bubble(
+                {
+                    "kind": "user",
+                    "name": "나",
+                    "meta": "처음 입력한 문제",
+                    "content": "질문만 보여준다.",
+                }
+            )
+
+        markup = markdown.call_args.args[0]
+        self.assertIn("질문만 보여준다.", markup)
+        self.assertNotIn("처음 입력한 문제", markup)
+
+    def test_work_history_hides_initial_prompt_and_final_answer(self):
+        response = SolveResponse(
+            problem="3주 안에 AI 학습 도우미를 만들 수 있을지 판단한다.",
+            personas=[
+                Persona(
+                    id="mvp",
+                    name="MVP 설계자",
+                    role="범위를 줄이는 역할",
+                    perspective="3주 안에는 한 가지 학습 흐름만 검증해야 합니다.",
+                )
+            ],
+            messages=[
+                AgentMessage(
+                    stage="specialist",
+                    agent_id="mvp",
+                    agent_name="MVP 설계자",
+                    role="범위를 줄이는 역할",
+                    content="3주 안에는 과목 추천 전체보다 오답 복습 한 흐름을 먼저 검증해야 합니다.",
+                    metadata={"source": "llm"},
+                ),
+                AgentMessage(
+                    stage="synthesizer",
+                    agent_id="synthesizer",
+                    agent_name="종합 에이전트",
+                    role="토론을 최종 답변으로 통합하는 역할",
+                    content="결론은 오답 복습 한 흐름입니다.",
+                    metadata={"source": "llm"},
+                )
+            ],
+            final_answer="결론은 오답 복습 한 흐름으로 좁혀 3주 안에 검증하는 것입니다.",
+            evaluation=Evaluation(
+                consistency=5,
+                specificity=5,
+                risk_awareness=5,
+                feasibility=5,
+                overall_comment="ok",
+            ),
+            used_llm=True,
+            model="test",
+        )
+
+        items = work_history_items(response)
+
+        self.assertNotIn("3주 안에 AI 학습 도우미를 만들 수 있을지 판단한다.", [item.get("content") for item in items])
+        self.assertNotIn("결론은 오답 복습 한 흐름입니다.", [item.get("content") for item in items])
+        self.assertEqual(["agent_group"], [item.get("kind") for item in items])
+
+    def test_work_duration_label_uses_compact_time(self):
+        created_at = datetime(2026, 1, 1, 0, 12, 3)
+        response = SolveResponse(
+            problem="작업 시간을 확인한다.",
+            personas=[],
+            messages=[],
+            final_answer="final",
+            evaluation=Evaluation(
+                consistency=5,
+                specificity=5,
+                risk_awareness=5,
+                feasibility=5,
+                overall_comment="ok",
+            ),
+            search_records=[
+                SearchRecord(
+                    phase="initial",
+                    mode="auto",
+                    enabled=True,
+                    needed=False,
+                    status="not_needed",
+                    elapsed_ms=3000,
+                    created_at=created_at - timedelta(minutes=12),
+                )
+            ],
+            used_llm=False,
+            model="test",
+            created_at=created_at,
+        )
+
+        self.assertEqual("12m 3s 동안 작업", response_work_duration_label(response))
+        self.assertEqual("2m 3s 동안 작업", format_activity_duration(123000))
 
     def test_search_activity_summary_uses_root_queries_without_tree_details(self):
         item = search_record_activity_item(

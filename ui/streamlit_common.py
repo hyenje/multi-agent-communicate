@@ -1,16 +1,10 @@
 from __future__ import annotations
 
-import base64
 import html
-import os
 import re
-
-import streamlit as st
 
 from app.characters import CHARACTER_POOL
 
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 STAGE_LABELS = {
     "persona_generation": "페르소나 생성",
@@ -30,33 +24,8 @@ SOURCE_LABELS = {
     "unknown": "알 수 없음",
 }
 
-HERO_IMAGE_PATH = os.path.join(
-    ROOT_DIR, "assets", "hero", "personagraph-agent-network.png"
-)
-PERSONA_IMAGE_DIR = os.path.join(ROOT_DIR, "assets", "personas")
-CHARACTER_IMAGE_PATHS = {
-    "nori": os.path.join(PERSONA_IMAGE_DIR, "nori.png"),
-    "orbit": os.path.join(PERSONA_IMAGE_DIR, "orbit.png"),
-    "milmil": os.path.join(PERSONA_IMAGE_DIR, "milmil.png"),
-    "sori": os.path.join(PERSONA_IMAGE_DIR, "sori.png"),
-    "mori": os.path.join(PERSONA_IMAGE_DIR, "mori.png"),
-    "gyeol": os.path.join(PERSONA_IMAGE_DIR, "gyeol.png"),
-    "jari": os.path.join(PERSONA_IMAGE_DIR, "jari.png"),
-    "sallycore": os.path.join(PERSONA_IMAGE_DIR, "sallycore.png"),
-    "lumi": os.path.join(PERSONA_IMAGE_DIR, "lumi.png"),
-    "haneul": os.path.join(PERSONA_IMAGE_DIR, "haneul.png"),
-}
 CHARACTERS_BY_ID = {character.id: character for character in CHARACTER_POOL}
 
-
-@st.cache_data(show_spinner=False)
-def image_data_uri(path: str) -> str:
-    with open(path, "rb") as image_file:
-        encoded = base64.b64encode(image_file.read()).decode("ascii")
-    extension = os.path.splitext(path)[1].lower().lstrip(".") or "png"
-    if extension == "jpg":
-        extension = "jpeg"
-    return f"data:image/{extension};base64,{encoded}"
 
 def chat_stage_label(message) -> str:
     if message.stage == "specialist":
@@ -157,13 +126,6 @@ def character_class(character) -> str:
     return f"pg-character-{safe_id}"
 
 def avatar_markup(name: str, character=None, fallback: str | None = None) -> str:
-    if character:
-        image_path = CHARACTER_IMAGE_PATHS.get(character.id)
-        if image_path and os.path.exists(image_path):
-            return (
-                f'<img class="pg-chat-avatar-img" src="{image_data_uri(image_path)}" '
-                f'alt="{html.escape(name)}">'
-            )
     initials = html.escape((fallback or name[:2] or "AI").upper())
     return f'<div class="pg-chat-avatar-fallback">{initials}</div>'
 

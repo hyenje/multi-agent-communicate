@@ -69,6 +69,7 @@ div[data-testid="stAppViewContainer"],
 div[data-testid="stAppViewContainer"] > .main {
   background: var(--pg-bg-main) !important;
   color: var(--pg-text-primary) !important;
+  overflow-x: hidden;
 }
 
 header[data-testid="stHeader"],
@@ -520,7 +521,12 @@ div[data-testid="stDialog"] div[role="dialog"] {
 
 .pg-chat-bubble-user {
   background: var(--pg-bg-user);
-  border: 1px solid var(--pg-border-default);
+  border: 0;
+  border-radius: 1.45rem;
+  padding: 0.7rem 0.96rem;
+  font-size: 0.98rem;
+  line-height: 1.55;
+  font-weight: 400;
 }
 
 .pg-chat-bubble-agent {
@@ -601,6 +607,52 @@ div[data-testid="stDialog"] div[role="dialog"] {
 .pg-message-name {
   color: var(--pg-text-primary);
   font-weight: 750;
+}
+
+.pg-message-content {
+  margin: 0;
+}
+
+.pg-final-answer-only {
+  width: min(var(--pg-chat-max-width), calc(100% - 2rem));
+  margin: 0 auto 1.05rem auto;
+  color: var(--pg-text-primary);
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.75;
+  letter-spacing: 0;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.pg-final-answer-only strong,
+.pg-chat-bubble-user strong {
+  font-weight: 520;
+}
+
+div[data-testid="stExpander"]:has(.pg-work-history-anchor) {
+  width: min(var(--pg-chat-max-width), calc(100% - 2rem));
+  margin: 0.25rem auto 1rem auto;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+div[data-testid="stExpander"]:has(.pg-work-history-anchor) details {
+  border: 0 !important;
+  background: transparent !important;
+}
+
+div[data-testid="stExpander"]:has(.pg-work-history-anchor) summary {
+  color: var(--pg-text-muted) !important;
+  font-size: 0.94rem !important;
+  font-weight: 650 !important;
+  padding: 0.62rem 0 !important;
+  border-top: 1px solid var(--pg-border-default);
+}
+
+div[data-testid="stExpander"]:has(.pg-work-history-anchor) summary:hover {
+  color: var(--pg-text-primary) !important;
 }
 
 .pg-character-nori {
@@ -722,6 +774,7 @@ div[data-testid="stChatMessage"]:has(.pg-config-bubble-anchor) div[data-testid="
 div[data-testid="stForm"]:has(.pg-empty-composer-anchor),
 div[data-testid="stForm"]:has(.pg-docked-composer-anchor) {
   position: relative;
+  box-sizing: border-box;
   width: min(var(--pg-composer-max-width), calc(100% - 2rem));
   height: fit-content !important;
   min-height: 3.35rem;
@@ -775,6 +828,7 @@ div[data-testid="stForm"]:has(.pg-empty-composer-anchor) div[data-testid="stText
 div[data-testid="stForm"]:has(.pg-docked-composer-anchor) div[data-testid="stTextArea"],
 div[data-testid="stForm"]:has(.pg-empty-composer-anchor) div[data-testid="stTextInput"],
 div[data-testid="stForm"]:has(.pg-docked-composer-anchor) div[data-testid="stTextInput"] {
+  min-width: 0 !important;
   margin: 0 !important;
 }
 
@@ -802,11 +856,14 @@ div[data-testid="stForm"]:has(.pg-docked-composer-anchor) div[data-testid="stTex
 
 div[data-testid="stForm"]:has(.pg-empty-composer-anchor) div[data-testid="stTextArea"] textarea,
 div[data-testid="stForm"]:has(.pg-docked-composer-anchor) div[data-testid="stTextArea"] textarea {
+  width: 100% !important;
+  max-width: 100% !important;
   min-height: 2.35rem !important;
   height: 2.55rem !important;
   max-height: 8.25rem !important;
   resize: none !important;
   overflow-y: hidden !important;
+  overflow-x: hidden !important;
   border: 0 !important;
   border-radius: 0 !important;
   background: transparent !important;
@@ -814,6 +871,9 @@ div[data-testid="stForm"]:has(.pg-docked-composer-anchor) div[data-testid="stTex
   box-shadow: none !important;
   color: var(--pg-text-primary) !important;
   line-height: 1.35 !important;
+  white-space: pre-wrap !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
 }
 
 div[data-testid="stForm"]:has(.pg-empty-composer-anchor) div[data-testid="stTextArea"] textarea::placeholder,
@@ -1061,7 +1121,7 @@ div[data-testid="stBottomBlockContainer"] {
 
 .pg-scroll-anchor {
   width: 1px;
-  height: 1px;
+  height: calc(var(--pg-composer-safe-space) + 0.4rem);
   pointer-events: none;
   scroll-margin-bottom: var(--pg-composer-safe-space);
 }
@@ -1070,6 +1130,10 @@ div[data-testid="stBottomBlockContainer"] {
   .pg-chat-bubble,
   .pg-active-status {
     max-width: 86%;
+  }
+  .pg-final-answer-only,
+  div[data-testid="stExpander"]:has(.pg-work-history-anchor) {
+    width: calc(100% - 1.6rem);
   }
   .pg-activity-row {
     width: calc(100% - 2.55rem);

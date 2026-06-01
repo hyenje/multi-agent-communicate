@@ -7,8 +7,9 @@ from urllib.parse import parse_qs, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field
 
-from app.llm import LLMClient, parse_json_object
+from app.llm import LLMClient, complete_structured
 from app.prompt_examples import SEARCH_QUERY_REWRITE_EXAMPLES
 from app.schemas import SearchQueryNode
 
@@ -32,6 +33,15 @@ class SearchTreeResult:
     queries: list[str]
     query_tree: list[SearchQueryNode]
     result_count: int
+
+
+class SearchClassificationOutput(BaseModel):
+    needs_search: bool
+    queries: list[str] = Field(default_factory=list)
+
+
+class SearchQueriesOutput(BaseModel):
+    queries: list[str] = Field(default_factory=list)
 
 
 class SearchClient:
@@ -89,7 +99,8 @@ class SearchClient:
         return Classification(needs_search=False, queries=[], reason="not_needed")
 
     def _classify_with_llm(self, text: str, llm: LLMClient) -> Classification:
-        result = llm.complete(
+        result = complete_structured(
+            llm,
             system_prompt="당신은 질문 분류기입니다. 엄격한 JSON만 반환하세요.",
             user_prompt=f"""다음 질문이 외부 검색을 통해 답변 품질이 유의미하게 높아지는지 판단하세요.
 
@@ -103,15 +114,15 @@ class SearchClient:
 반드시 JSON 객체만 반환하세요.
 - needs_search: true 또는 false
 - queries: 검색어 배열 (needs_search가 true일 때만, 최대 3개, 한국어 또는 영어)""",
+            schema=SearchClassificationOutput,
             temperature=0.0,
         )
-        if not result.used_llm or not result.content:
+        if not result.used_llm:
             return Classification(needs_search=False, reason="llm_unavailable")
-        parsed = parse_json_object(result.content)
-        if not isinstance(parsed, dict):
+        if not isinstance(result.value, SearchClassificationOutput):
             return Classification(needs_search=False, reason="llm_parse_error")
-        needs = bool(parsed.get("needs_search"))
-        queries = [str(q).strip() for q in parsed.get("queries", []) if str(q).strip()][:ROOT_QUERY_LIMIT]
+        needs = result.value.needs_search
+        queries = [str(q).strip() for q in result.value.queries if str(q).strip()][:ROOT_QUERY_LIMIT]
         return Classification(needs_search=needs and bool(queries), queries=queries, reason="llm")
 
     def _rewrite_queries(self, text: str, llm: LLMClient, fallback_queries: list[str]) -> list[str]:
@@ -119,7 +130,8 @@ class SearchClient:
         if not text.strip():
             return fallback
 
-        result = llm.complete(
+        result = complete_structured(
+            llm,
             system_prompt="당신은 웹 검색어 재작성기입니다. 엄격한 JSON만 반환하세요.",
             user_prompt=f"""사용자 입력을 검색엔진 친화적인 검색어 1~3개로 바꾸세요.
 
@@ -137,16 +149,13 @@ class SearchClient:
 - 최신성, 비교, 가격, 사례, 프레임워크, 시뮬레이션처럼 검색 목적이 드러나게 하세요.
 - 한국어 질문이어도 영어 검색어가 더 정확하면 영어를 섞으세요.
 - API 키, 개인정보, 내부 설정값은 검색어에 넣지 마세요.""",
+            schema=SearchQueriesOutput,
             temperature=0.0,
         )
-        if not result.used_llm or not result.content:
+        if not result.used_llm or not isinstance(result.value, SearchQueriesOutput):
             return fallback
 
-        parsed = parse_json_object(result.content)
-        if not isinstance(parsed, dict):
-            return fallback
-
-        queries = self._dedupe_queries(str(query) for query in parsed.get("queries", []))
+        queries = self._dedupe_queries(str(query) for query in result.value.queries)
         return queries[:ROOT_QUERY_LIMIT] or fallback
 
     def _local_needs_search(self, text: str) -> bool:
@@ -307,7 +316,8 @@ class SearchClient:
     ) -> list[str]:
         if not root_lines:
             return []
-        result = llm.complete(
+        result = complete_structured(
+            llm,
             system_prompt="당신은 검색 결과를 보고 다음 검색어를 확장하는 리서치 플래너입니다. 엄격한 JSON만 반환하세요.",
             user_prompt=f"""부모 검색어와 검색 결과를 보고, 더 깊게 확인할 자식 검색어를 최대 3개 만드세요.
 
@@ -324,16 +334,14 @@ class SearchClient:
 
 출력 JSON:
 {{"queries": ["자식 검색어 1", "자식 검색어 2"]}}""",
+            schema=SearchQueriesOutput,
             temperature=0.0,
         )
-        if not result.used_llm or not result.content:
-            return []
-        parsed = parse_json_object(result.content)
-        if not isinstance(parsed, dict):
+        if not result.used_llm or not isinstance(result.value, SearchQueriesOutput):
             return []
 
         child_queries: list[str] = []
-        for query in self._dedupe_queries(str(query) for query in parsed.get("queries", [])):
+        for query in self._dedupe_queries(str(query) for query in result.value.queries):
             normalized = self._normalize_query(query)
             if normalized in seen_queries:
                 continue

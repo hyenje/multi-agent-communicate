@@ -11,9 +11,7 @@ from ui.streamlit_chat import (
     agent_group_key,
     group_agent_items,
     message_item,
-    persona_intro_item,
     render_activity_item,
-    render_chat_bubble,
     render_chat_item,
     render_chat_thread,
     render_pending_problem_thread,
@@ -203,9 +201,6 @@ def render_streaming_chat_thread(
         for activity_item in initial_activity_items:
             render_activity_item(activity_item)
 
-        if render_context and base_response is None:
-            for persona in live_personas:
-                render_chat_bubble(persona_intro_item(persona))
         personas_by_id = {
             persona.id: persona
             for persona in (live_personas or (base_response.personas if base_response else []))
@@ -406,6 +401,7 @@ def run_initial_stream() -> None:
     st.session_state["pg_current_run_id"] = response.run_id
     st.session_state["pg_pending_problem"] = None
     st.session_state["pg_chat_mode"] = "completed"
+    st.rerun()
 
 def run_followup_stream() -> None:
     response = st.session_state.get("pg_current_response")
@@ -445,3 +441,4 @@ def run_followup_stream() -> None:
     st.session_state["pg_current_run_id"] = updated.run_id
     st.session_state["pg_pending_followup"] = None
     st.session_state["pg_chat_mode"] = "completed"
+    st.rerun()

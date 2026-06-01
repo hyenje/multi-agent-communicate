@@ -3,9 +3,27 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from app.llm import LLMClient, parse_json_object
+from pydantic import BaseModel, Field
+
+from app.llm import LLMClient, complete_structured
 from app.prompt_examples import SYNTHESIS_CANDIDATE_EXAMPLES, SYNTHESIS_SELECTION_EXAMPLES
 from app.schemas import AgentMessage, ReasoningCandidate, ReasoningRecord
+
+
+class SynthesisCandidateOutput(BaseModel):
+    id: str
+    title: str
+    answer: str
+
+
+class SynthesisCandidatesOutput(BaseModel):
+    candidates: list[SynthesisCandidateOutput] = Field(default_factory=list)
+
+
+class SynthesisSelectionOutput(BaseModel):
+    selected_id: str
+    selection_summary: str
+    scores: dict[str, int] = Field(default_factory=dict)
 
 
 @dataclass
@@ -32,7 +50,8 @@ class SynthesizerAgent:
     ) -> tuple[AgentMessage, ReasoningRecord]:
         transcript = self._transcript(debate_messages)
         evidence_block = self._evidence_block(search_context, memory_context)
-        result = self.llm.complete(
+        result = complete_structured(
+            self.llm,
             system_prompt="당신은 한국어 다중 에이전트 토론을 최종 답변 후보로 통합합니다. 엄격한 JSON만 반환하세요.",
             user_prompt=f"""토론을 바탕으로 서로 다른 최종 답변 후보 {self.CANDIDATE_COUNT}개를 만드세요.
 
@@ -50,11 +69,11 @@ class SynthesizerAgent:
 {evidence_block}
 
 출력 JSON 형식:
-[
+{{"candidates": [
   {{"id": "candidate_1", "title": "짧은 한국어 제목", "answer": "5~6줄 최종 답변"}},
   {{"id": "candidate_2", "title": "짧은 한국어 제목", "answer": "5~6줄 최종 답변"}},
   {{"id": "candidate_3", "title": "짧은 한국어 제목", "answer": "5~6줄 최종 답변"}}
-]
+]}}
 
 규칙:
 - 각 후보의 answer는 사용자에게 그대로 보여줄 수 있는 완성 답변이어야 합니다.
@@ -64,9 +83,10 @@ class SynthesizerAgent:
 - 토론에 없던 새 주제를 임의로 추가하지 마세요.
 - 검색 근거와 선별 품질 메모리가 있으면 그 범위 안에서만 구체 사실을 사용하세요.
 - 선별 품질 메모리의 과거 답변 문장을 그대로 복사하지 마세요.""",
+            schema=SynthesisCandidatesOutput,
             temperature=0.35,
         )
-        if not result.used_llm or not result.content:
+        if not result.used_llm or result.value is None:
             return self._fallback_candidate_result(
                 problem=problem,
                 critique=critique,
@@ -76,7 +96,7 @@ class SynthesizerAgent:
                 error=result.error,
             )
 
-        candidates = self._parse_candidates(result.content)
+        candidates = self._candidates_from_output(result.value)
         if len(candidates) < self.CANDIDATE_COUNT:
             return self._fallback_candidate_result(
                 problem=problem,
@@ -87,7 +107,8 @@ class SynthesizerAgent:
                 error="Unable to parse three synthesis candidates.",
             )
 
-        judge_result = self.llm.complete(
+        judge_result = complete_structured(
+            self.llm,
             system_prompt="당신은 최종 답변 후보를 고르는 검증자입니다. 엄격한 JSON만 반환하세요.",
             user_prompt=f"""사용자의 문제와 토론 근거에 가장 잘 맞는 최종 답변 후보를 고르세요.
 
@@ -116,9 +137,10 @@ class SynthesizerAgent:
 - 직접성, 근거 일치, 가정 위험, 실행 가능성, 간결성을 기준으로 고르세요.
 - 검색 근거와 선별 품질 메모리에 어긋나는 후보는 감점하세요.
 - 내부 사고과정이나 장문 추론을 쓰지 마세요.""",
+            schema=SynthesisSelectionOutput,
             temperature=0.1,
         )
-        selection = self._parse_selection(judge_result.content, candidates) if judge_result.used_llm else None
+        selection = self._selection_from_output(judge_result.value, candidates) if judge_result.used_llm else None
         if selection is None:
             selected = candidates[0]
             status = "fallback"
@@ -314,53 +336,42 @@ class SynthesizerAgent:
             error=error,
         )
 
-    def _parse_candidates(self, raw: str) -> list[SynthesisCandidate]:
-        parsed = parse_json_object(raw)
-        if isinstance(parsed, dict):
-            parsed = parsed.get("candidates")
-        if not isinstance(parsed, list):
+    def _candidates_from_output(self, output: object) -> list[SynthesisCandidate]:
+        if not isinstance(output, SynthesisCandidatesOutput):
             return []
 
         candidates: list[SynthesisCandidate] = []
-        for index, item in enumerate(parsed[: self.CANDIDATE_COUNT], start=1):
-            if not isinstance(item, dict):
-                continue
-            answer = self._clean_final_answer(str(item.get("answer", "")).strip())
+        for index, item in enumerate(output.candidates[: self.CANDIDATE_COUNT], start=1):
+            answer = self._clean_final_answer(item.answer.strip())
             if not answer:
                 continue
             candidates.append(
                 SynthesisCandidate(
-                    id=str(item.get("id") or f"candidate_{index}").strip() or f"candidate_{index}",
-                    title=str(item.get("title") or f"후보 {index}").strip() or f"후보 {index}",
+                    id=item.id.strip() or f"candidate_{index}",
+                    title=item.title.strip() or f"후보 {index}",
                     answer=answer,
                 )
             )
         return candidates
 
-    def _parse_selection(
+    def _selection_from_output(
         self,
-        raw: str,
+        output: object,
         candidates: list[SynthesisCandidate],
     ) -> tuple[str, str, dict[str, int]] | None:
-        parsed = parse_json_object(raw)
-        if not isinstance(parsed, dict):
+        if not isinstance(output, SynthesisSelectionOutput):
             return None
 
         candidate_ids = {candidate.id for candidate in candidates}
-        selected_id = str(parsed.get("selected_id", "")).strip()
+        selected_id = output.selected_id.strip()
         if selected_id not in candidate_ids:
             return None
 
-        raw_scores = parsed.get("scores", {})
         scores = {}
-        if isinstance(raw_scores, dict):
-            for candidate_id in candidate_ids:
-                scores[candidate_id] = self._score(raw_scores.get(candidate_id))
-        else:
-            scores = {candidate_id: 0 for candidate_id in candidate_ids}
+        for candidate_id in candidate_ids:
+            scores[candidate_id] = self._score(output.scores.get(candidate_id))
 
-        summary = str(parsed.get("selection_summary", "")).strip()
-        return selected_id, summary, scores
+        return selected_id, output.selection_summary.strip(), scores
 
     def _format_candidates_for_judge(self, candidates: list[SynthesisCandidate]) -> str:
         return "\n\n".join(

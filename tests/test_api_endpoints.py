@@ -3,8 +3,11 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from app.llm import LLMClient
 from app.main import app
@@ -84,6 +87,92 @@ class APIEndpointTest(unittest.TestCase):
         self.assertEqual("upstage", client.provider)
         self.assertEqual("test-upstage-key", client.api_key)
         self.assertEqual("https://api.upstage.ai/v1", client.base_url)
+
+    def test_llm_client_uses_langchain_chat_model(self):
+        os.environ["OPENAI_API_KEY"] = "test-openai-key"
+        os.environ["OPENAI_BASE_URL"] = "https://example.test/v1"
+
+        class FakeChatOpenAI:
+            instances = []
+
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+                self.messages = None
+                self.bound_kwargs = None
+                FakeChatOpenAI.instances.append(self)
+
+            def bind(self, **kwargs):
+                self.bound_kwargs = kwargs
+                return self
+
+            def invoke(self, messages):
+                self.messages = messages
+                return SimpleNamespace(content=" LangChain reply ")
+
+        with patch("langchain_openai.ChatOpenAI", FakeChatOpenAI):
+            client = LLMClient(model="openai:test-default", temperature=0.4)
+            result = client.complete("system prompt", "user prompt", temperature=0.2)
+
+        self.assertTrue(result.used_llm)
+        self.assertEqual("LangChain reply", result.content)
+        instance = FakeChatOpenAI.instances[0]
+        self.assertEqual("test-default", instance.kwargs["model"])
+        self.assertEqual("test-openai-key", instance.kwargs["api_key"])
+        self.assertEqual("https://example.test/v1", instance.kwargs["base_url"])
+        self.assertEqual(0.4, instance.kwargs["temperature"])
+        self.assertEqual({"temperature": 0.2}, instance.bound_kwargs)
+        self.assertEqual(
+            [("system", "system prompt"), ("human", "user prompt")],
+            instance.messages,
+        )
+
+    def test_llm_client_uses_langchain_structured_output(self):
+        os.environ["OPENAI_API_KEY"] = "test-openai-key"
+
+        class StructuredReply(BaseModel):
+            answer: str
+
+        class FakeChatOpenAI:
+            instances = []
+
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+                self.schema = None
+                self.messages = None
+                self.bound_kwargs = None
+                FakeChatOpenAI.instances.append(self)
+
+            def bind(self, **kwargs):
+                self.bound_kwargs = kwargs
+                return self
+
+            def with_structured_output(self, schema):
+                self.schema = schema
+                return self
+
+            def invoke(self, messages):
+                self.messages = messages
+                return self.schema(answer="structured reply")
+
+        with patch("langchain_openai.ChatOpenAI", FakeChatOpenAI):
+            client = LLMClient(model="openai:test-default", temperature=0.4)
+            result = client.complete_structured(
+                "system prompt",
+                "user prompt",
+                StructuredReply,
+                temperature=0.1,
+            )
+
+        self.assertTrue(result.used_llm)
+        self.assertIsInstance(result.value, StructuredReply)
+        self.assertEqual("structured reply", result.value.answer)
+        instance = FakeChatOpenAI.instances[0]
+        self.assertEqual({"temperature": 0.1}, instance.bound_kwargs)
+        self.assertEqual(StructuredReply, instance.schema)
+        self.assertEqual(
+            [("system", "system prompt"), ("human", "user prompt")],
+            instance.messages,
+        )
 
     def test_solve_stream_saves_selected_allowed_model(self):
         with self.client.stream(

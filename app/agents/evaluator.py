@@ -1,7 +1,27 @@
 from __future__ import annotations
 
-from app.llm import LLMClient, parse_json_object
+from pydantic import BaseModel, Field
+
+from app.llm import LLMClient, complete_structured
 from app.schemas import AgentMessage, Evaluation
+
+
+class EvaluationOutput(BaseModel):
+    consistency: int = Field(..., ge=1, le=5)
+    specificity: int = Field(..., ge=1, le=5)
+    risk_awareness: int = Field(..., ge=1, le=5)
+    feasibility: int = Field(..., ge=1, le=5)
+    overall_comment: str
+    improvement_suggestions: list[str] = Field(default_factory=list)
+
+
+class ReverseVerificationOutput(BaseModel):
+    score: int = Field(..., ge=1, le=5)
+    missing_points: list[str] = Field(default_factory=list)
+    unsupported_points: list[str] = Field(default_factory=list)
+    style_issues: list[str] = Field(default_factory=list)
+    needs_extra_round: bool = False
+    refine_instruction: str = ""
 
 
 class EvaluatorAgent:
@@ -46,14 +66,16 @@ class EvaluatorAgent:
 - 한국어 사용자를 위한 자연스러운 한국어로 작성하세요.
 - OpenAI, API, MVP처럼 필요한 고유명사나 기술 약어 외에는 영어를 쓰지 마세요.
 """
-        result = self.llm.complete(
+        result = complete_structured(
+            self.llm,
             system_prompt="당신은 한국어 다중 에이전트 추론 품질을 평가합니다. 엄격한 JSON만 반환하세요.",
             user_prompt=prompt,
+            schema=EvaluationOutput,
             temperature=0.15,
         )
 
         source = "fallback"
-        evaluation = self._from_llm(result.content) if result.used_llm else None
+        evaluation = self._from_output(result.value) if result.used_llm else None
         error = result.error
         if result.used_llm and evaluation is not None:
             source = "llm"
@@ -114,13 +136,15 @@ class EvaluatorAgent:
 - 발표 화면에서 읽을 수 있도록 너무 길지도, 너무 짧지도 않아야 합니다.
 - 단순 문장 다듬기로 충분하면 needs_extra_round는 false입니다.
 """
-        result = self.llm.complete(
+        result = complete_structured(
+            self.llm,
             system_prompt="당신은 한국어 다중 에이전트 토론의 최종 답변을 역방향 검증합니다. 엄격한 JSON만 반환하세요.",
             user_prompt=prompt,
+            schema=ReverseVerificationOutput,
             temperature=0.1,
         )
 
-        verification = self._reverse_from_llm(result.content) if result.used_llm else None
+        verification = self._reverse_from_output(result.value) if result.used_llm else None
         source = "fallback"
         error = result.error
         if result.used_llm and verification is not None:
@@ -135,45 +159,42 @@ class EvaluatorAgent:
         verification["source"] = source
         return verification
 
-    def _from_llm(self, raw: str) -> Evaluation | None:
-        parsed = parse_json_object(raw)
-        if not isinstance(parsed, dict):
+    def _from_output(self, output: object) -> Evaluation | None:
+        if not isinstance(output, EvaluationOutput):
             return None
 
         try:
             return Evaluation(
-                consistency=self._score(parsed.get("consistency")),
-                specificity=self._score(parsed.get("specificity")),
-                risk_awareness=self._score(parsed.get("risk_awareness")),
-                feasibility=self._score(parsed.get("feasibility")),
-                overall_comment=str(parsed["overall_comment"]).strip(),
+                consistency=self._score(output.consistency),
+                specificity=self._score(output.specificity),
+                risk_awareness=self._score(output.risk_awareness),
+                feasibility=self._score(output.feasibility),
+                overall_comment=output.overall_comment.strip(),
                 improvement_suggestions=[
                     str(item).strip()
-                    for item in parsed.get("improvement_suggestions", [])
+                    for item in output.improvement_suggestions
                     if str(item).strip()
                 ][:3],
                 metadata={},
             )
-        except (KeyError, TypeError, ValueError):
+        except (TypeError, ValueError):
             return None
 
-    def _reverse_from_llm(self, raw: str) -> dict[str, object] | None:
-        parsed = parse_json_object(raw)
-        if not isinstance(parsed, dict):
+    def _reverse_from_output(self, output: object) -> dict[str, object] | None:
+        if not isinstance(output, ReverseVerificationOutput):
             return None
 
         try:
-            score = self._score(parsed.get("score"))
+            score = self._score(output.score)
             return {
                 "score": score,
                 "passed": score >= self.REVERSE_VERIFICATION_THRESHOLD,
                 "threshold": self.REVERSE_VERIFICATION_THRESHOLD,
-                "missing_points": self._string_list(parsed.get("missing_points")),
-                "unsupported_points": self._string_list(parsed.get("unsupported_points")),
-                "style_issues": self._string_list(parsed.get("style_issues")),
-                "needs_extra_round": self._bool_value(parsed.get("needs_extra_round"))
-                and score < self.REVERSE_VERIFICATION_THRESHOLD,
-                "refine_instruction": str(parsed.get("refine_instruction", "")).strip(),
+                "missing_points": self._string_list(output.missing_points),
+                "unsupported_points": self._string_list(output.unsupported_points),
+                "style_issues": self._string_list(output.style_issues),
+                "needs_extra_round": output.needs_extra_round and score < self.REVERSE_VERIFICATION_THRESHOLD,
+                "refine_instruction": output.refine_instruction.strip(),
             }
         except (TypeError, ValueError):
             return None
@@ -247,13 +268,6 @@ class EvaluatorAgent:
         if not isinstance(value, list):
             return []
         return [str(item).strip() for item in value if item is not None and str(item).strip()][:5]
-
-    def _bool_value(self, value: object) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            return value.strip().lower() in {"true", "yes", "1", "필요", "필요함"}
-        return False
 
     def _keyword_terms(self, text: str) -> set[str]:
         normalized = "".join(

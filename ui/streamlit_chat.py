@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+from datetime import timedelta
 
 import streamlit as st
 
@@ -24,19 +25,6 @@ def initial_problem_item(response: SolveResponse) -> dict:
         "name": "나",
         "meta": "처음 입력한 문제",
         "content": response.problem,
-    }
-
-def persona_intro_item(persona) -> dict:
-    character = character_for_persona(persona)
-    perspective = persona.perspective
-    content = trim_summary(perspective, 120)
-    return {
-        "kind": "agent",
-        "name": persona.name,
-        "meta": "페르소나 소개",
-        "content": content,
-        "character": character,
-        "avatar_name": persona.name,
     }
 
 def message_item(message, personas_by_id: dict) -> dict | None:
@@ -87,7 +75,6 @@ def chat_thread_items(response: SolveResponse, confirmed_settings: dict | None =
         elif record.phase in {"debate_round", "evaluation_extra_round"}:
             round_searches.setdefault((record.phase, record.round_number), []).append((index, record))
 
-    items.extend(persona_intro_item(persona) for persona in response.personas)
     followup_search_index = 0
     for message in response.messages:
         for index, record in searches_before_message(message, round_searches):
@@ -218,17 +205,23 @@ def render_chat_bubble(item: dict) -> None:
     character_css = character_class(character)
 
     if kind == "user":
+        meta_markup = ""
+        if item.get("show_meta"):
+            meta_markup = (
+                f'<div class="pg-message-meta"><span class="pg-message-name">{html.escape(name)}</span>'
+                f"<span>{html.escape(meta)}</span></div>"
+            )
         st.markdown(
-            f"""
-<div class="pg-chat-shell">
-<div class="pg-chat-row pg-chat-row-user">
-  <div class="pg-chat-bubble pg-chat-bubble-user">
-    <div class="pg-message-meta"><span class="pg-message-name">{html.escape(name)}</span><span>{html.escape(meta)}</span></div>
-    {message_content_html(content)}
-  </div>
-</div>
-</div>
-""",
+            (
+                '<div class="pg-chat-shell">'
+                '<div class="pg-chat-row pg-chat-row-user">'
+                '<div class="pg-chat-bubble pg-chat-bubble-user">'
+                f"{meta_markup}"
+                f'<div class="pg-message-content">{message_content_html(content)}</div>'
+                "</div>"
+                "</div>"
+                "</div>"
+            ),
             unsafe_allow_html=True,
         )
         return
@@ -336,6 +329,64 @@ def render_agent_group(item: dict) -> None:
     )
     st.markdown("\n".join(rows), unsafe_allow_html=True)
 
+def render_final_answer(response: SolveResponse) -> None:
+    if not response.final_answer.strip():
+        return
+    st.markdown(
+        f"""
+<div class="pg-final-answer-only">
+  {message_content_html(response.final_answer)}
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+def work_history_items(
+    response: SolveResponse,
+    confirmed_settings: dict | None = None,
+) -> list[dict]:
+    return [
+        item
+        for item in grouped_chat_thread_items(response, confirmed_settings=confirmed_settings)
+        if include_work_history_item(item)
+    ]
+
+def include_work_history_item(item: dict) -> bool:
+    if item.get("kind") == "user" and item.get("meta") == "처음 입력한 문제":
+        return False
+    if item.get("stage") == "synthesizer":
+        return False
+    return True
+
+def render_work_history(
+    response: SolveResponse,
+    confirmed_settings: dict | None = None,
+) -> None:
+    items = work_history_items(response, confirmed_settings=confirmed_settings)
+    if not items:
+        return
+
+    with st.expander(response_work_duration_label(response), expanded=False):
+        st.markdown('<span class="pg-work-history-anchor"></span>', unsafe_allow_html=True)
+        for item in items:
+            render_chat_item(item)
+
+def response_work_duration_label(response: SolveResponse) -> str:
+    return format_activity_duration(response_work_elapsed_ms(response))
+
+def response_work_elapsed_ms(response: SolveResponse) -> int:
+    starts = []
+    for record in response.search_records:
+        starts.append(record.created_at - timedelta(milliseconds=record.elapsed_ms or 0))
+    for record in response.reasoning_records:
+        starts.append(record.created_at)
+    for record in response.memory_records:
+        starts.append(record.created_at)
+    if starts:
+        elapsed = response.created_at - min(starts)
+        return max(0, int(elapsed.total_seconds() * 1000))
+    return sum(max(0, int(record.elapsed_ms or 0)) for record in response.search_records)
+
 def search_record_activity_item(record: SearchRecord) -> dict:
     root_queries = [node.query for node in record.query_tree[:3]] or list(record.queries[:3])
     return {
@@ -360,12 +411,12 @@ def format_activity_duration(elapsed_ms: int | float | None) -> str:
     if elapsed <= 0:
         return "작업 기록"
     if elapsed < 1000:
-        return "1초 미만 동안 작업"
+        return "1s 미만 동안 작업"
     total_seconds = max(1, round(elapsed / 1000))
     minutes, seconds = divmod(total_seconds, 60)
     if minutes:
-        return f"{minutes}분 {seconds}초 동안 작업"
-    return f"{seconds}초 동안 작업"
+        return f"{minutes}m {seconds}s 동안 작업"
+    return f"{seconds}s 동안 작업"
 
 def search_activity_title(item: dict) -> str:
     if item.get("running"):
@@ -521,8 +572,9 @@ def render_chat_thread(
     include_anchor: bool = True,
     confirmed_settings: dict | None = None,
 ) -> None:
-    for item in grouped_chat_thread_items(response, confirmed_settings=confirmed_settings):
-        render_chat_item(item)
+    render_chat_bubble(initial_problem_item(response))
+    render_work_history(response, confirmed_settings=confirmed_settings)
+    render_final_answer(response)
     if include_anchor:
         st.markdown('<div id="pg-chat-bottom" class="pg-scroll-anchor"></div>', unsafe_allow_html=True)
         scroll_chat_to_bottom()

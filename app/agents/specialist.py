@@ -1,7 +1,14 @@
 from __future__ import annotations
 
-from app.llm import LLMClient, parse_json_object
+from pydantic import BaseModel, Field
+
+from app.llm import LLMClient, complete_structured
 from app.schemas import AgentMessage, Persona
+
+
+class SelfVerificationOutput(BaseModel):
+    score: int = Field(..., ge=1, le=5)
+    issue: str = ""
 
 
 class SpecialistAgent:
@@ -243,26 +250,27 @@ class SpecialistAgent:
 - score: integer 1-5
 - issue: 부족한 점을 한국어 한 문장으로 작성. 충분하면 빈 문자열
 """
-        result = self.llm.complete(
+        result = complete_structured(
+            self.llm,
             system_prompt="당신은 한국어 다중 에이전트 발언을 검증하는 평가자입니다. 엄격한 JSON만 반환하세요.",
             user_prompt=prompt,
+            schema=SelfVerificationOutput,
             temperature=0.05,
         )
-        parsed = parse_json_object(result.content) if result.used_llm else None
-        if not isinstance(parsed, dict):
+        if not result.used_llm or not isinstance(result.value, SelfVerificationOutput):
             verification = self._local_verification(content, attempts=attempt)
             verification["method"] = "local"
             verification["error"] = result.error or "Unable to parse self verification JSON."
             return verification
 
-        score = self._verification_score(parsed.get("score"))
+        score = self._verification_score(result.value.score)
         return {
             "score": score,
             "passed": score >= self.SELF_VERIFICATION_THRESHOLD,
             "threshold": self.SELF_VERIFICATION_THRESHOLD,
             "attempts": attempt,
             "method": "llm",
-            "issue": str(parsed.get("issue", "")).strip(),
+            "issue": result.value.issue.strip(),
             "error": result.error,
         }
 
